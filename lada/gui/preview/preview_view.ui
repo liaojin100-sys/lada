@@ -162,6 +162,23 @@ SPDX-License-Identifier: AGPL-3.0
                                                                                 </property>
                                                                             </object>
                                                                         </child>
+  <!-- === [新增开始] 去马赛克开关按钮 === -->
+                                                                <child>
+                                                                    <object class="GtkToggleButton" id="button_toggle_mosaic">
+                                                                        <property name="receives-default">true</property>
+                                                                        <property name="margin-end">8</property>
+                                                                        <property name="tooltip-text" translatable="true">Enable AI Mosaic Restoration</property>
+                                                                        <property name="active">False</property> <!-- 默认关闭 -->
+                                                                        <child>
+                                                                            <object class="GtkImage">
+                                                                                <!-- 使用魔术棒图标，或者 view-reveal-symbolic -->
+                                                                                <property name="icon-name">magic-wand-symbolic</property>
+                                                                            </object>
+                                                                        </child>
+                                                                        <signal name="toggled" handler="on_button_toggle_mosaic_toggled"/>
+                                                                    </object>
+                                                                </child>
+                                                                <!-- === [新增结束] === -->
 
                                                                         <signal name="clicked" handler="button_play_pause_callback"/>
                                                                     </object>
