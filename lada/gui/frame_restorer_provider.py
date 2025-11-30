@@ -61,10 +61,14 @@ class FrameRestorerProvider:
 
     def get(self):
         assert self.options is not None, "IllegalState: get called but options are not initialized. Call init before using get"
-        if self.options.passthrough:
+        # === [修改] 增加判断：如果 passthrough 为真，或者模型名称为 None，都进入直通模式 ===
+        if self.options.passthrough or self.options.mosaic_restoration_model_name is None:
+            # 返回直通恢复器（只读取视频，不进行 AI 处理）
             return PassthroughFrameRestorer(self.options.video_metadata.video_file)
+        # === [修改结束] ===
 
         is_empty_cache = self.models_cache is None
+        # ... (后面代码保持不变)
         cache_miss = False
         if is_empty_cache:
             cache_miss = True
