@@ -32,6 +32,9 @@ class PreviewView(Gtk.Widget):
 
     button_play_pause = Gtk.Template.Child()
     button_mute_unmute = Gtk.Template.Child()
+       # === [新增] 对应 XML 里添加的 ID ===
+    button_toggle_mosaic: Gtk.ToggleButton = Gtk.Template.Child() 
+    # ...
     picture_video_preview: Gtk.Picture = Gtk.Template.Child()
     widget_timeline: Timeline = Gtk.Template.Child()
     button_image_play_pause = Gtk.Template.Child()
@@ -98,29 +101,6 @@ class PreviewView(Gtk.Widget):
         self._view_stack: Adw.ViewStack | None = None
 
         self.drop_down_selected_handler_id = self.drop_down_files.connect("notify::selected", lambda obj, spec: self.play_file(obj.get_property(spec.name)))
-
-        # === [新增开始] 添加去马赛克开关按钮 ===
-        # 1. 创建分隔符（美观）
-        separator = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        separator.set_margin_start(10)
-        separator.set_margin_end(10)
-        
-        # 2. 创建开关按钮
-        # 使用 ToggleButton 并配上图标，比 Switch 更适合工具栏
-        self.btn_toggle_mosaic = Gtk.ToggleButton()
-        self.btn_toggle_mosaic.set_icon_name("magic-wand-symbolic") # 或者 "view-reveal-symbolic"
-        self.btn_toggle_mosaic.set_tooltip_text("启用 AI 去马赛克")
-        self.btn_toggle_mosaic.set_valign(Gtk.Align.CENTER)
-        self.btn_toggle_mosaic.set_active(False) # 默认关闭，实现快速预览
-        
-        # 3. 连接点击事件
-        self.btn_toggle_mosaic.connect("toggled", self.on_mosaic_toggle_changed)
-
-        # 4. 将按钮添加到播放控制栏 (box_playback_controls)
-        # 我们把它加到最后面
-        self.box_playback_controls.append(separator)
-        self.box_playback_controls.append(self.btn_toggle_mosaic)
-        # === [新增结束] ===
 
         self.setup_double_click_fullscreen()
 
@@ -222,6 +202,22 @@ class PreviewView(Gtk.Widget):
             self.pipeline_manager.play()
         else:
             logger.warning(f"unhandled pipeline state in button_play_pause_callback: {self.pipeline_manager.state}")
+            # ================= 插入开始 =================
+    @Gtk.Template.Callback()
+    def on_button_toggle_mosaic_toggled(self, button):
+        # 检查是否已加载文件
+        if not self._frame_restorer_options:
+            return
+
+        # 获取开关状态
+        is_enabled = button.get_active()
+        
+        # 决定模型名称：开启则读取配置，关闭则设为 None
+        target_model = self.config.mosaic_restoration_model if is_enabled else None
+        
+        # 更新 options，这会触发 setter 自动重启 worker
+        self.frame_restorer_options = self._frame_restorer_options.with_mosaic_restoration_model_name(target_model)
+    # ================= 插入结束 =================
 
     @Gtk.Template.Callback()
     def button_mute_unmute_callback(self, button_clicked):
@@ -291,7 +287,11 @@ class PreviewView(Gtk.Widget):
 
         def on_mosaic_restoration_model(object, spec):
             if self._frame_restorer_options:
-                self.frame_restorer_options = self._frame_restorer_options.with_mosaic_restoration_model_name(self._config.mosaic_restoration_model)
+                 # === [修改] ===
+                # 只有当开关开启时，才实时更新模型；否则只更新 Config 对象，不应用到当前播放
+                if self.button_toggle_mosaic.get_active():
+                    self.frame_restorer_options = self._frame_restorer_options.with_mosaic_restoration_model_name(self._config.mosaic_restoration_model)
+                # 如果开关是关的，我们不需要做动作，因为下次打开开关时会读取 config 中的新值
         self._config.connect("notify::mosaic-restoration-model", on_mosaic_restoration_model)
 
         def on_mosaic_detection_model(object, spec):
@@ -446,15 +446,15 @@ class PreviewView(Gtk.Widget):
 
     def _open_file(self, file: Gio.File):
         # === [修改开始] ===
-        # 获取当前按钮状态（如果还没有按钮，默认为 False）
-        is_mosaic_enabled = getattr(self, 'btn_toggle_mosaic', None) and self.btn_toggle_mosaic.get_active()
+        # 获取按钮当前的视觉状态（如果 UI 还没初始化完，默认为 False）
+        is_mosaic_enabled = self.button_toggle_mosaic.get_active()
         
-        # 根据按钮状态决定初始模型
+        # 只有当按钮处于激活状态时，才加载配置中的 AI 模型
         initial_model = self.config.mosaic_restoration_model if is_mosaic_enabled else None
         
-        # 修改初始化 Options 的第一行参数
+        # 创建 Options 时使用 initial_model
         self.frame_restorer_options = FrameRestorerOptions(
-            initial_model, # 这里使用我们要的动态模型名，而不是直接 self.config.mosaic_restoration_model
+            initial_model,  # <--- 这里改用我们计算出的 initial_model
             self.config.mosaic_detection_model, 
             video_utils.get_video_meta_data(file.get_path()), 
             self.config.device, 
@@ -466,8 +466,6 @@ class PreviewView(Gtk.Widget):
         
         file_path = file.get_path()
         # ... 后面的代码保持不变 ...
-        self.frame_restorer_options = FrameRestorerOptions(self.config.mosaic_restoration_model, self.config.mosaic_detection_model, video_utils.get_video_meta_data(file.get_path()), self.config.device, self.config.max_clip_duration, self.config.show_mosaic_detections, False)
-        file_path = file.get_path()
 
         assert not self._video_preview_init_done
         self.video_metadata = video_utils.get_video_meta_data(file_path)
@@ -649,29 +647,3 @@ class PreviewView(Gtk.Widget):
         else:
             GLib.idle_add(self.pipeline_manager.close_video_file)
     
-    # === [新增方法] ===
-    def on_mosaic_toggle_changed(self, button):
-        is_enabled = button.get_active()
-        
-        # 如果当前没有加载视频或选项未初始化，直接返回
-        if not self._frame_restorer_options:
-            return
-
-        # 获取当前的配置的模型名称
-        original_model_name = self.config.mosaic_restoration_model
-        
-        # 逻辑核心：
-        # 如果开关开启 -> 使用配置的模型名
-        # 如果开关关闭 -> 强制将模型名设为 None (或者是空字符串，取决于后端实现)，
-        # 这样后端就不会加载 AI 模型，从而实现原片直出。
-        target_model = original_model_name if is_enabled else None
-        
-        # 更新 options，这会自动触发 reset_appsource_worker (在 frame_restorer_options.setter 中)
-        # 注意：这里假设 FrameRestorerOptions 支持 with_mosaic_restoration_model_name 方法
-        # 且后端如果收到 None/空值 会跳过处理。
-        self.frame_restorer_options = self._frame_restorer_options.with_mosaic_restoration_model_name(target_model)
-        
-        # 更新按钮提示
-        status_text = "启用" if is_enabled else "关闭"
-        self.btn_toggle_mosaic.set_tooltip_text(f"AI 去马赛克 ({status_text})")
-    # === [新增结束] ===
